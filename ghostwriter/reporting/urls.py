@@ -51,8 +51,8 @@ from .views import (
     LocalFindingNoteUpdate,
     LocalFindingNoteDelete,
     convert_finding,
-    export_findings_to_csv
-) 
+    export_findings_to_csv, import_from, import_list
+)
 
 app_name = "reporting"
 
@@ -176,4 +176,12 @@ urlpatterns += [
                      name='import_findings'),
                 path('export/csv/', export_findings_to_csv,
                      name='export_findings_to_csv'),
+               ]
+
+# URLs for import findings from other apps
+urlpatterns += [
+                path('reports/<int:pk>/import_from/',
+                     import_from, name='import_from'),
+                path('reports/<int:pk>/import_list/',
+                     import_list, name='import_list'),
                ]

@@ -29,6 +29,8 @@ class FindingCreateForm(forms.ModelForm):
         super(FindingCreateForm, self).__init__(*args, **kwargs)
         self.fields['title'].widget.attrs['placeholder'] = \
             'SQL Injection'
+        self.fields['nessusID'].widget.attrs['placeholder'] = \
+            '0'
         self.fields['description'].widget.attrs['placeholder'] = \
             'What is this ...'
         self.fields['impact'].widget.attrs['placeholder'] = \

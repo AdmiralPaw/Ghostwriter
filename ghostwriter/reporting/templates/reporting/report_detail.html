@@ -30,7 +30,7 @@
 
     <!-- Report Status & Toggles -->
     <h6>
-        Report Status: 
+        Report Status:
         {% if report.complete %}
             <em>Complete!</em>
             <a title="Mark {{ report.name }} as incomplete" href="{% url 'reporting:report_status_toggle' report.id %}"><i class="fas fa-toggle-on"></i></i></a>
@@ -42,7 +42,7 @@
 
     {% if report.complete %}
         <h6>
-            Delivery Status: 
+            Delivery Status:
             {% if report.delivered %}
                 <em>Delivered!</em>
                 <a title="Mark {{ report.name }} as incomplete" href="{% url 'reporting:report_delivery_toggle' report.id %}"><i class="fas fa-toggle-on"></i></i></a>
@@ -73,6 +73,9 @@
         </div>
 
         <p><a href="{% url 'reporting:assign_blank_finding' report.id %}"><i class="far fa-plus-square"></i> Add a Blank Finding</a></p>
+
+        <!-- TODO: сделать нормальную страничку для выбора парсера и загрузки файла -->
+        <p><a href="{% url 'reporting:import_from' report.id %}"><i class="far fa-plus-square"></i> Import from...</a></p>
 
         <!-- Finding Table Section -->
         {% if report.reportfindinglink_set.all %}
@@ -123,7 +126,7 @@
                     <tr>
                         <td>
                             <a href="{% url 'reporting:position_decrease' finding.id %}"><i class="fas fa-chevron-up"></i></a>
-                             {{ finding.position }} 
+                             {{ finding.position }}
                              <a href="{% url 'reporting:position_increase' finding.id %}"><i class="fas fa-chevron-down"></i></a>
                         </td>
                         {% if finding.severity.severity == "Critical" %}
@@ -162,7 +165,7 @@
                                 <td style="color: #A8D08D"><strong>You</strong></td>
                             {% else %}
                                 <td style="color: #FF7E79"><strong>You</strong></td>
-                            {% endif %} 
+                            {% endif %}
                         {% else %}
                             <td style="color: #7a7a7a"><strong>{{ finding.assigned_to }}</strong></td>
                         {% endif %}

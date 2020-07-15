@@ -206,7 +206,7 @@
                             <tr>
                                 <td>{{.caption}}</td>
                                 <td style="text-align: left">Start a line of text with this keyword to make it a caption. This is intended to follow a code block.</td>
-                            </tr>                       
+                            </tr>
                         {% endverbatim %}
                         {% if reportfindinglink.evidence_set.all  %}
                             {% for finding in reportfindinglink.evidence_set.all %}
@@ -221,7 +221,7 @@
                     </table>
                     <p>
                         Insert evidence by using the above keywords. Image evidence may be inserted and previewed inline by clicking the WYSIWIG editor's image button and entering the evidence image's Ghostwriter URL (e.g., <em>https://ghosttwriter.local/media/evidence/2/ghostwriter.png</em>).
-                        Inserting an external image's URL will work but these images <strong><em><u>will not be</u></em></strong> carried over to the report outputs. 
+                        Inserting an external image's URL will work but these images <strong><em><u>will not be</u></em></strong> carried over to the report outputs.
                     </p>
                     <p>
                         For additional formatting, utilize the WYSIWIG HTML formatting to apply bold, italic, code, and inline code text styles.<br />
@@ -334,6 +334,7 @@
         <hr>
 
         {{ form.title|as_crispy_field }}
+        {{ form.nessusID|as_crispy_field }}
 
         <div class="form-row">
             <div class="form-group col-md-6 mb-0">

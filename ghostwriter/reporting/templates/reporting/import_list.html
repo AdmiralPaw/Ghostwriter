@@ -1,0 +1,112 @@
+{% extends "base_generic.html" %}
+{% load crispy_forms_tags %}
+
+{% block pagetitle %}Findings Library{% endblock %}
+
+{% block breadcrumbs %}
+<nav aria-label="breadcrumb" style="padding-left: 20px;">
+  <ul class="breadcrumb" style="margin: 0;">
+    <li class="breadcrumb-item"><a href="{% url 'home:dashboard' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Findings</li>
+  </ul>
+</nav>
+{% endblock %}
+
+{% block content %}
+{% if parsed_findings|length == 0 %}
+<p>There are no findings to see here.</p>
+{% else %}
+<form action="{% url 'reporting:import_list' report.id %}" method="POST" enctype="multipart/form-data"
+      class="form-horizontal">
+  {% csrf_token %}
+  <div class="form-group">
+    <button class="button"><i class="fas fa-file-upload"></i> Upload</button>
+  </div>
+  <div><input type="hidden" name='parsed_findings' value='{{ parsed_findings }}'></div>
+  <input type="button" value="Выбрать всё" onclick="invert(this.form.checkbox)">
+  <!-- Findings Table Section -->
+  <table id="findingsTable" class="tablesorter">
+    <thead>
+    <tr>
+      <th id="cols" class="sortable">Severity</th>
+      <th id="cols" class="sortable">Type</th>
+      <th id="cols" class="sortable">Title</th>
+      <th class="sorter-false">
+        Add to Report
+        <div class="dropdown">
+          <button class="dropbtn dropbtn-info far fa-question-circle"></button>
+          <div class="dropdown-content dropdown-content-info">
+            <p>Clicking <i class="far fa-plus-square"></i> will add the finding to your report.</p>
+          </div>
+        </div>
+      </th>
+    </tr>
+    </thead>
+    <tbody class="list">
+    {% for finding in parsed_findings %}
+    <tr class="even">
+      <!-- Severity Column -->
+      {% if finding.severity == "Critical" %}
+      <td id="cols" class="critical"><p style="display: none">{{ finding.severity_weight }}</p>{{ finding.severity }}</td>
+      {% elif finding.severity == "High" %}
+      <td id="cols" class="high"><p style="display: none">{{ finding.severity_weight }}</p>{{ finding.severity }}</td>
+      {% elif finding.severity == "Medium" %}
+      <td id="cols" class="medium"><p style="display: none">{{ finding.severity_weight }}</p>{{ finding.severity }}</td>
+      {% elif finding.severity == "Low" %}
+      <td id="cols" class="low"><p style="display: none">{{ finding.severity_weight }}</p>{{ finding.severity }}</td>
+      {% else %}
+      <td id="cols" class="info"><p style="display: none">{{ finding.severity_weight }}</p>{{ finding.severity }}</td>
+      {% endif %}
+
+      <!-- Finding Type (e.g. Network) -->
+      {% if finding.finding_type == "Network" %}
+      <td style="font-size: 15px" title="Network Finding"><i class="fas fa-network-wired"></i> Network</td>
+      {% elif finding.finding_type == "Wireless" %}
+      <td style="font-size: 15px" title="Wireless Finding"><i class="fas fa-wifi"></i> Wireless</td>
+      {% elif finding.finding_type == "Physical" %}
+      <td style="font-size: 15px" title="Physical Finding"><i class="fas fa-user-secret"></i> Physical</td>
+      {% elif finding.finding_type == "Web Application" %}
+      <td style="font-size: 15px" title="Web App Finding"><i class="fas fa-code"></i> Web App</td>
+      {% elif finding.finding_type == "Mobile Application" %}
+      <td style="font-size: 15px" title="Mobile Finding"><i class="fas fa-mobile-alt"></i> Mobile App</td>
+      {% elif finding.finding_type == "Cloud" %}
+      <td style="font-size: 15px" title="Cloud Finding"><i class="fas fa-cloud"></i> Cloud</td>
+      {% elif finding.finding_type == "Host" %}
+      <td style="font-size: 15px" title="Local Host Finding"><i class="fas fa-laptop"></i> Host</td>
+      {% else %}
+      <td id="cols" class="severity">{{ finding.finding_type }}</td>
+      {% endif %}
+
+      <!-- Other Information -->
+      <td id="cols" class="title">{{ finding.title }}</td>
+      <td><input type="checkbox" name="checkbox" value="{{ finding.parserID }}" style="width: 25px; height: 25px"></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</form>
+{% endif %}
+{% endblock %}
+
+{% block morescripts %}
+<!-- jQuery Tablesorter Script -->
+<script>
+        $(document).ready(function()  {
+            $("#findingsTable").tablesorter(
+                            {
+                                cssAsc: 'down',
+                                cssDesc: 'up',
+                                cssNone: 'none',
+                            }
+                        );
+            $('.tablesorter').trigger('update');
+        });
+
+        function invert(field) {
+            for (i=0; i<field.length; i++) {
+                if (field[i].checked==true) field[i].checked=false;
+                else field[i].checked=true;
+            }
+        }
+</script>
+{% endblock %}

@@ -38,7 +38,7 @@
                             <tr>
                                 <td>{{.caption}}</td>
                                 <td style="text-align: left">Start a line of text with this keyword to make it a caption. This is intended to follow a code block.</td>
-                            </tr>                        
+                            </tr>
                         {% endverbatim %}
                     </table>
                     <p>
@@ -81,6 +81,7 @@
         <hr>
 
         {{ form.title|as_crispy_field }}
+        {{ form.nessusID|as_crispy_field }}
 
         <div class="form-row">
             <div class="form-group col-md-6 mb-0">

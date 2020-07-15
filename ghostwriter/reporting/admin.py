@@ -11,14 +11,14 @@ from import_export.admin import ImportExportModelAdmin
 # Define the admin classes and register models
 @admin.register(Finding)
 class FindingAdmin(ImportExportModelAdmin):
-    list_display = ('severity', 'title', 'finding_type')
-    list_filter = ('severity', 'title', 'finding_type')
+    list_display = ('nessusID', 'severity', 'title', 'finding_type')
+    list_filter = ('nessusID', 'severity', 'title', 'finding_type')
     fieldsets = (
         (None, {
             'fields': ('severity', 'title', 'finding_type')
         }),
         ('Finding Details', {
-            'fields': ('description', 'impact', 'mitigation',
+            'fields': ('nessusID', 'description', 'impact', 'mitigation',
                        'replication_steps', 'host_detection_techniques',
                        'network_detection_techniques', 'references')
         })

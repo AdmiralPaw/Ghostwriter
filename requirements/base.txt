@@ -5,6 +5,9 @@ rcssmin==1.0.6  # https://github.com/ndparker/rcssmin
 argon2-cffi==19.1.0  # https://github.com/hynek/argon2_cffi
 redis==3.2.1  # https://github.com/antirez/redis
 
+# Added for parse Nessus
+lxml
+
 # Django
 # ------------------------------------------------------------------------------
 django==2.2.3  # pyup: < 3.0  # https://www.djangoproject.com/

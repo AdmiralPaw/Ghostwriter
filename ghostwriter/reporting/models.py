@@ -78,6 +78,12 @@ class Finding(models.Model):
 
     There are foreign keys for the `Severity` and `FindingType` models.
     """
+    # TODO: поменять текст
+    nessusID = models.IntegerField(
+        'nessusID',
+        default=0,
+        help_text='Set this findings weight to adjust where it appears in the '
+        'report compared to other findings with the same Severity rating')
     title = models.CharField(
         'Title',
         max_length=200,
@@ -225,6 +231,12 @@ class ReportFindingLink(models.Model):
     There are foreign keys for the `Severity`, `FindingType`, `Report`, and
     `User` models.
     """
+    # TODO: поменять текст
+    nessusID = models.IntegerField(
+        'nessusID',
+        default=0,
+        help_text='Set this findings weight to adjust where it appears in the '
+        'report compared to other findings with the same Severity rating')
     title = models.CharField(
         'Title',
         max_length=200,

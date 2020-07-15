@@ -2,7 +2,6 @@
 various webpages.
 """
 
-
 # Django imports for generic views and template rendering
 from django.urls import reverse
 from django.views import generic
@@ -30,6 +29,8 @@ from django.conf import settings
 # Import models and forms
 from django.db.models import Q
 from django.contrib.auth import get_user_model
+
+from ghostwriter.reporting.parsers.nessus_parser import NessusParser
 
 User = get_user_model()
 
@@ -67,9 +68,7 @@ from docx.opc.exceptions import PackageNotFoundError
 # Import custom modules
 from ghostwriter.modules import reportwriter
 
-
 # Setup logger
-import logging
 import logging.config
 
 # Using __name__ resolves to ghostwriter.reporting.views
@@ -148,14 +147,14 @@ def findings_list(request):
     if search_term:
         messages.success(request, 'Displaying search results for: %s' %
                          search_term, extra_tags='alert-success')
-        findings_list = Finding.objects.\
-            select_related('severity', 'finding_type').\
+        findings_list = Finding.objects. \
+            select_related('severity', 'finding_type'). \
             filter(Q(title__icontains=search_term) |
-                   Q(description__icontains=search_term)).\
+                   Q(description__icontains=search_term)). \
             order_by('severity__weight', 'finding_type', 'title')
     else:
-        findings_list = Finding.objects.\
-            select_related('severity', 'finding_type').\
+        findings_list = Finding.objects. \
+            select_related('severity', 'finding_type'). \
             all().order_by('severity__weight', 'finding_type', 'title')
     findings_filter = FindingFilter(request.GET, queryset=findings_list)
     return render(request, 'reporting/finding_list.html',
@@ -167,7 +166,7 @@ def reports_list(request):
     """View showing all reports. This view defaults to the report_list.html
     template and allows for filtering.
     """
-    reports_list = Report.objects.select_related('created_by').all().\
+    reports_list = Report.objects.select_related('created_by').all(). \
         order_by('complete', 'title')
     reports_filter = ReportFilter(request.GET, queryset=reports_list)
     return render(request, 'reporting/report_list.html',
@@ -179,7 +178,7 @@ def archive_list(request):
     """View showing all archived reports. This view defaults to the
     report_list.html template and allows for filtering.
     """
-    archive_list = Archive.objects.select_related('project__client').all().\
+    archive_list = Archive.objects.select_related('project__client').all(). \
         order_by('project__client')
     archive_filter = ArchiveFilter(request.GET, queryset=archive_list)
     return render(request, 'reporting/archives.html',
@@ -206,7 +205,7 @@ def import_findings(request):
         # The file is loaded into memory, so we must be aware of system limits
         if csv_file.multiple_chunks():
             messages.error(request, 'Uploaded file is too big (%.2f MB).' %
-                           (csv_file.size/(1000*1000)),
+                           (csv_file.size / (1000 * 1000)),
                            extra_tags='alert-danger')
             return HttpResponseRedirect(reverse('reporting:import_findings'))
     # General catch-all if something goes terribly wrong
@@ -273,7 +272,7 @@ def import_findings(request):
                 pass
 
         messages.success(request, 'Your csv file has been imported '
-                         'successfully =)', extra_tags='alert-success')
+                                  'successfully =)', extra_tags='alert-success')
 
     except Exception as error:
         messages.error(
@@ -286,10 +285,149 @@ def import_findings(request):
 
 
 @login_required
+def import_from(request, pk):
+    """View function for uploading and parsing files from
+     other apps to import new (or not) findings to local
+     project findings.
+    """
+    report = Report.objects.get(pk=pk)
+    # If the request is 'GET' return the upload page
+    if request.method == 'GET':
+        return render(request, 'reporting/import_from.html', {'report': report})
+    # If not a GET, then proceed
+    try:
+        # Get the `file` from the POSTed form data
+        file = request.FILES['file']
+
+        # Do a lame/basic check to see if this is a parsed friendly file
+        if file.name.endswith('.nessus'):
+            parser = NessusParser()
+        # To add a new parser use this:
+        # elif file.name.endswith('.%some_type%'):
+        #     parser = SomeParser()
+        else:
+            raise Exception(file.name)
+
+    # General catch-all if something goes terribly wrong
+    except Exception as error:
+        messages.error(request, 'Unable to upload/read file: {}'.format(error),
+                       extra_tags='alert-danger')
+        logger.error('Unable to upload/read file – %s', error)
+        return render(request, 'reporting/import_from.html', {'report': report})
+
+    # Loop over the lines and save the domains to the Finding model
+    try:
+        parsed_findings = parser.begin_parse(file)
+        if not parsed_findings:
+            raise Exception('some problem with parse file')
+        for finding in parsed_findings:
+            instance = Finding.objects.filter(Q(nessusID=finding['parserID']))
+            if instance:
+                finding['parserID'] = str(instance[0].nessusID)
+                finding['title'] = instance[0].title
+                finding['description'] = instance[0].description
+                finding['impact'] = instance[0].impact
+                finding['mitigation'] = instance[0].mitigation
+                finding['replication_steps'] = instance[0].replication_steps
+                finding['host_detection_techniques'] = instance[0].host_detection_techniques
+                finding['network_detection_techniques'] = instance[0].network_detection_techniques
+                finding['references'] = instance[0].references
+    except Exception as error:
+        messages.error(request, 'Unable to parse file: {}'.format(error),
+                       extra_tags='alert-danger')
+        logger.error('Unable to parse file – %s', error)
+        return render(request, 'reporting/import_from.html', {'report': report})
+
+    return render(request, 'reporting/import_list.html',
+                  {'parsed_findings': parsed_findings,
+                   'report': report,
+                   })
+
+
+@login_required
+def import_list(request, pk):
+    """View showing all importing findings. This view also
+    load checked findings from import_list.html to local report
+    findings.
+    """
+    def get_position(report_pk, sv):
+        finding_count = ReportFindingLink.objects. \
+            filter(Q(report__pk=report_pk) & Q(severity=sv)).count()
+        if finding_count:
+            try:
+                # Get all other findings of the same severity with last position first
+                finding_positions = ReportFindingLink.objects.filter(
+                    Q(report__pk=report_pk) & Q(severity=sv)).order_by('-position')
+                # Set new position to be one above the last/largest position
+                last_position = finding_positions[0].position
+                return last_position + 1
+            except:
+                return finding_count + 1
+        else:
+            return 1
+
+    report = Report.objects.get(pk=pk)
+    # Load nessusID each of checked findings on import_list.html
+    values = request.POST.getlist('checkbox')
+    # report_values need for check duplicates in report
+    report_values = list()
+    if ReportFindingLink.objects.filter(Q(report__pk=report.id)).count():
+        for tmp in ReportFindingLink.objects.filter(Q(report__pk=report.id)):
+            report_values.append(str(tmp.nessusID))
+    parsed_findings = request.POST.getlist('parsed_findings')
+    parsed_findings = str(parsed_findings[0][1:-1])
+    parsed_findings = eval(parsed_findings)
+    for finding in parsed_findings:
+        if finding['parserID'] in values and finding['parserID'] not in report_values:
+            # Create a Severity object for the provided rating (e.g. High)
+            severity_entry = finding.get('severity', 'Informational')
+            try:
+                severity = Severity.objects.get(severity__iexact=severity_entry)
+            except Severity.DoesNotExist:
+                severity = Severity(severity=severity_entry)
+                severity.save()
+            # Create a FindingType object for the provided type (e.g. Network)
+            type_entry = finding.get('finding_type', 'Network')
+            try:
+                finding_type = FindingType.objects.get(finding_type__iexact=type_entry)
+            except FindingType.DoesNotExist:
+                finding_type = FindingType(finding_type=type_entry)
+                finding_type.save()
+            try:
+                report_link = ReportFindingLink(
+                    nessusID=finding['parserID'],
+                    title=finding['title'],
+                    description=finding['description'],
+                    impact=finding['impact'],
+                    mitigation=finding['mitigation'],
+                    replication_steps=finding['replication_steps'],
+                    host_detection_techniques=finding['host_detection_techniques'],
+                    network_detection_techniques=finding['network_detection_techniques'],
+                    references=finding['references'],
+                    severity=severity,
+                    finding_type=finding_type,
+                    report=report,
+                    assigned_to=request.user,
+                    position=get_position(report.id, severity))
+                report_link.save()
+            except Exception as error:
+                messages.error(request, 'Failed parsing {}: {}'.format(finding['title'], error),
+                               extra_tags='alert-danger')
+                logger.error('Failed parsing %s: %s', finding['title'], error)
+                pass
+
+    messages.success(request, 'A blank finding has been successfully added to '
+                              'report.',
+                     extra_tags='alert-success')
+    return HttpResponseRedirect(reverse('reporting:report_detail', args=(pk,)))
+
+
+@login_required
 def assign_finding(request, pk):
     """View function for adding a finding to the user's active report."""
+
     def get_position(report_pk):
-        finding_count = ReportFindingLink.objects.\
+        finding_count = ReportFindingLink.objects. \
             filter(Q(report__pk=report_pk) & Q(severity=finding.severity)).count()
         if finding_count:
             try:
@@ -312,7 +450,7 @@ def assign_finding(request, pk):
             report = Report.objects.get(pk=active_report['id'])
         except Exception:
             messages.error(request, 'You have no active report! Select a '
-                           'report to edit before trying to edit one.',
+                                    'report to edit before trying to edit one.',
                            extra_tags='alert-danger')
             return HttpResponseRedirect(reverse('reporting:findings'))
         finding = Finding.objects.get(pk=pk)
@@ -341,7 +479,7 @@ def assign_finding(request, pk):
         return HttpResponseRedirect(reverse('reporting:findings'))
     else:
         messages.error(request, 'You have no active report! Select a report '
-                       'to edit before trying to edit one.',
+                                'to edit before trying to edit one.',
                        extra_tags='alert-danger')
         return HttpResponseRedirect(reverse('reporting:findings'))
 
@@ -389,7 +527,7 @@ def assign_blank_finding(request, pk):
                                     position=get_position(report))
     report_link.save()
     messages.success(request, 'A blank finding has been successfully added to '
-                     'report.',
+                              'report.',
                      extra_tags='alert-success')
     return HttpResponseRedirect(reverse('reporting:report_detail', args=(report.id,)))
 
@@ -407,12 +545,13 @@ def position_increase(request, pk):
     finding_queryset = ReportFindingLink.objects.filter(
         Q(report=finding_instance.report.pk) & Q(severity=finding_instance.severity)).order_by('position')
     # If new position is greater than total findings, reduce by one
-    if finding_queryset.count() <  finding_instance.position:
+    if finding_queryset.count() < finding_instance.position:
         finding_instance.position = finding_queryset.count()
         messages.warning(request,
-                         'Finding is already in the bottom position for the {} severity group.'.format(finding_instance.severity),
+                         'Finding is already in the bottom position for the {} severity group.'.format(
+                             finding_instance.severity),
                          extra_tags='alert-warning'
-                        )
+                         )
     else:
         counter = 1
         if finding_queryset:
@@ -432,7 +571,7 @@ def position_increase(request, pk):
     # Save the updated position
     finding_instance.save(update_fields=['position'])
     return HttpResponseRedirect(reverse('reporting:report_detail',
-                                args=(finding_instance.report.id,)))
+                                        args=(finding_instance.report.id,)))
 
 
 @login_required
@@ -451,9 +590,10 @@ def position_decrease(request, pk):
     if finding_instance.position < 1:
         finding_instance.position = 1
         messages.warning(request,
-                         'Finding is already in the top position for the {} severity group.'.format(finding_instance.severity),
+                         'Finding is already in the top position for the {} severity group.'.format(
+                             finding_instance.severity),
                          extra_tags='alert-warning'
-                        )
+                         )
     else:
         counter = 1
         if finding_queryset:
@@ -473,7 +613,7 @@ def position_decrease(request, pk):
     # Save the updated position
     finding_instance.save(update_fields=['position'])
     return HttpResponseRedirect(reverse('reporting:report_detail',
-                                args=(finding_instance.report.id,)))
+                                        args=(finding_instance.report.id,)))
 
 
 @login_required
@@ -490,14 +630,14 @@ def activate_report(request, pk):
             request.session['active_report']['title'] = report_instance.title
             messages.success(request, '%s is now your active report.' %
                              report_instance.title, extra_tags='alert-success')
-            return HttpResponseRedirect(reverse('reporting:report_detail', args=(pk, )))
+            return HttpResponseRedirect(reverse('reporting:report_detail', args=(pk,)))
         else:
             messages.error(request, 'The specified report does not exist!',
                            extra_tags='alert-danger')
             return HttpResponseRedirect(reverse('reporting:reports'))
     except Exception:
         messages.error(request, 'Could not set the requested report as your '
-                       'active report.',
+                                'active report.',
                        extra_tags='alert-danger')
         return HttpResponseRedirect(reverse('reporting:reports'))
 
@@ -515,7 +655,7 @@ def report_status_toggle(request, pk):
                                  report_instance.title,
                                  extra_tags='alert-success')
                 return HttpResponseRedirect(reverse('reporting:report_detail',
-                                            args=(pk, )))
+                                                    args=(pk,)))
             else:
                 report_instance.complete = True
                 report_instance.save()
@@ -523,7 +663,7 @@ def report_status_toggle(request, pk):
                                  report_instance.title,
                                  extra_tags='alert-success')
                 return HttpResponseRedirect(reverse('reporting:report_detail',
-                                            args=(pk, )))
+                                                    args=(pk,)))
         else:
             messages.error(request, 'The specified report does not exist!',
                            extra_tags='alert-danger')
@@ -547,7 +687,7 @@ def report_delivery_toggle(request, pk):
                                  report_instance.title,
                                  extra_tags='alert-success')
                 return HttpResponseRedirect(reverse('reporting:report_detail',
-                                            args=(pk, )))
+                                                    args=(pk,)))
             else:
                 report_instance.delivered = True
                 report_instance.save()
@@ -555,7 +695,7 @@ def report_delivery_toggle(request, pk):
                                  report_instance.title,
                                  extra_tags='alert-success')
                 return HttpResponseRedirect(reverse('reporting:report_detail',
-                                            args=(pk, )))
+                                                    args=(pk,)))
         else:
             messages.error(request, 'The specified report does not exist!',
                            extra_tags='alert-danger')
@@ -576,27 +716,27 @@ def finding_status_toggle(request, pk):
                 finding_instance.complete = False
                 finding_instance.save()
                 messages.success(request, '%s is now marked as in need of '
-                                 'editing.' % finding_instance.title,
+                                          'editing.' % finding_instance.title,
                                  extra_tags='alert-success')
                 return HttpResponseRedirect(reverse('reporting:report_detail',
-                                            args=(
-                                                finding_instance.report.id, )))
+                                                    args=(
+                                                        finding_instance.report.id,)))
             else:
                 finding_instance.complete = True
                 finding_instance.save()
                 messages.success(request, '%s is now marked as ready for '
-                                 'review.' % finding_instance.title,
+                                          'review.' % finding_instance.title,
                                  extra_tags='alert-success')
                 return HttpResponseRedirect(reverse('reporting:report_detail',
-                                            args=(
-                                                finding_instance.report.id, )))
+                                                    args=(
+                                                        finding_instance.report.id,)))
         else:
             messages.error(request, 'The specified finding does not exist!',
                            extra_tags='alert-danger')
             return HttpResponseRedirect(reverse('reporting:reports'))
     except Exception:
         messages.error(request, 'Could not set the requested finding as '
-                       'complete.',
+                                'complete.',
                        extra_tags='alert-danger')
         return HttpResponseRedirect(reverse('reporting:reports'))
 
@@ -610,19 +750,19 @@ def upload_evidence(request, pk):
             new_evidence = form.save()
             if os.path.isfile(new_evidence.document.path):
                 messages.success(request, 'Evidence uploaded successfully',
-                                extra_tags='alert-success')
+                                 extra_tags='alert-success')
                 return HttpResponseRedirect(reverse('reporting:report_detail',
-                                            args=(new_evidence.finding.report.id,)))
+                                                    args=(new_evidence.finding.report.id,)))
             else:
                 messages.error(request, 'Evidence file failed to upload',
-                                extra_tags='alert-danger')
+                               extra_tags='alert-danger')
                 return HttpResponseRedirect(reverse('reporting:report_detail',
-                                            args=(new_evidence.finding.report.id,)))
+                                                    args=(new_evidence.finding.report.id,)))
     else:
         form = EvidenceForm(initial={
             'finding': pk,
             'uploaded_by': request.user
-            })
+        })
     return render(request, 'reporting/evidence_form.html', {'form': form})
 
 
@@ -642,21 +782,21 @@ def upload_evidence_modal(request, pk):
             new_evidence = form.save()
             if os.path.isfile(new_evidence.document.path):
                 messages.success(request, 'Evidence uploaded successfully',
-                                extra_tags='alert-success')
+                                 extra_tags='alert-success')
             else:
                 messages.error(request, 'Evidence file failed to upload',
-                                extra_tags='alert-danger')
+                               extra_tags='alert-danger')
             return HttpResponseRedirect(reverse('reporting:upload_evidence_modal_success'))
     # Other requests (GETs) are shown the form
     else:
         form = EvidenceForm(initial={
             'finding': pk,
             'uploaded_by': request.user
-            })
+        })
     context = {
         'form': form,
         'used_friendly_names': used_friendly_names
-        }
+    }
     return render(request, 'reporting/evidence_form_modal.html', context=context)
 
 
@@ -673,11 +813,11 @@ def view_evidence(request, pk):
     file_content = None
     if os.path.isfile(evidence_instance.document.path):
         if (
-                evidence_instance.document.name.endswith('.txt') or
-                evidence_instance.document.name.endswith('.log') or
-                evidence_instance.document.name.endswith('.ps1') or
-                evidence_instance.document.name.endswith('.py') or
-                evidence_instance.document.name.endswith('.md')
+            evidence_instance.document.name.endswith('.txt') or
+            evidence_instance.document.name.endswith('.log') or
+            evidence_instance.document.name.endswith('.ps1') or
+            evidence_instance.document.name.endswith('.py') or
+            evidence_instance.document.name.endswith('.md')
         ):
             filetype = 'text'
             file_content = []
@@ -701,10 +841,10 @@ def view_evidence(request, pk):
         file_content = []
         file_content.append("FILE NOT FOUND")
     context = {
-                'filetype': filetype,
-                'evidence': evidence_instance,
-                'file_content': file_content
-              }
+        'filetype': filetype,
+        'evidence': evidence_instance,
+        'file_content': file_content
+    }
     return render(request, 'reporting/evidence_detail.html', context=context)
 
 
@@ -725,25 +865,30 @@ def generate_docx(request, pk):
         docx = spenny.generate_word_docx()
         response = HttpResponse(
             content_type='application/vnd.openxmlformats-officedocument.'
-            'wordprocessingml.document')
+                         'wordprocessingml.document')
         response['Content-Disposition'] = 'attachment; filename=report.docx'
         docx.save(response)
         return response
     except jinja2.exceptions.TemplateError as error:
-        messages.error(request, 'Failed to generate the Word report because the docx template contains invalid Jinja2 code:\n{}'.format(error),
-                extra_tags='alert-danger')
+        messages.error(request,
+                       'Failed to generate the Word report because the docx template contains invalid Jinja2 code:\n{}'.format(
+                           error),
+                       extra_tags='alert-danger')
     except jinja2.exceptions.UndefinedError as error:
-        messages.error(request, 'Failed to generate the Word report because the docx template contains an undefined Jinja2 variable:\n{}'.format(error),
-                extra_tags='alert-danger')
+        messages.error(request,
+                       'Failed to generate the Word report because the docx template contains an undefined Jinja2 variable:\n{}'.format(
+                           error),
+                       extra_tags='alert-danger')
     except PackageNotFoundError:
         messages.error(request, 'Failed to generate the Word report because the docx template could not be found!',
-                extra_tags='alert-danger')
+                       extra_tags='alert-danger')
     except FileNotFoundError as error:
-        messages.error(request, 'Failed to generate the Word report because the an evidence file is missing: {}'.format(error),
-                extra_tags='alert-danger')
+        messages.error(request,
+                       'Failed to generate the Word report because the an evidence file is missing: {}'.format(error),
+                       extra_tags='alert-danger')
     except Exception as error:
         messages.error(request, 'Failed to generate the Word report for an unknown reason: {}'.format(error),
-                extra_tags='alert-danger')
+                       extra_tags='alert-danger')
     return HttpResponseRedirect(request.META['HTTP_REFERER'])
 
 
@@ -768,13 +913,13 @@ def generate_xlsx(request, pk):
         response = HttpResponse(
             output.read(),
             content_type='application/application/vnd.openxmlformats-'
-            'officedocument.spreadsheetml.sheet')
+                         'officedocument.spreadsheetml.sheet')
         response['Content-Disposition'] = 'attachment; filename=report.xlsx'
         output.close()
         return response
     except Exception as error:
         messages.error(request, 'Failed to generate the Xlsx report: {}'.format(error),
-                extra_tags='alert-danger')
+                       extra_tags='alert-danger')
         return HttpResponseRedirect(request.META['HTTP_REFERER'])
 
 
@@ -795,13 +940,13 @@ def generate_pptx(request, pk):
         pptx = spenny.generate_powerpoint_pptx()
         response = HttpResponse(
             content_type='application/application/vnd.openxmlformats-'
-            'officedocument.presentationml.presentation')
+                         'officedocument.presentationml.presentation')
         response['Content-Disposition'] = 'attachment; filename=report.pptx'
         pptx.save(response)
         return response
     except Exception as error:
         messages.error(request, 'Failed to generate the slide deck: {}'.format(error),
-                extra_tags='alert-danger')
+                       extra_tags='alert-danger')
         return HttpResponseRedirect(request.META['HTTP_REFERER'])
 
 
@@ -862,7 +1007,7 @@ def generate_all(request, pk):
         return response
     except:
         messages.error(request, 'Failed to generate one or more documents for the archive',
-                extra_tags='alert-danger')
+                       extra_tags='alert-danger')
         return HttpResponseRedirect(request.META['HTTP_REFERER'])
 
 
@@ -887,7 +1032,7 @@ def archive(request, pk):
     then zip all reports and evidence. The archive file is saved is saved in
     the archives directory.
     """
-    report_instance = Report.objects.\
+    report_instance = Report.objects. \
         select_related('project', 'project__client').get(pk=pk)
     archive_loc = os.path.join(settings.MEDIA_ROOT, 'archives')
     evidence_loc = os.path.join(settings.MEDIA_ROOT, 'evidence', str(pk))
@@ -927,7 +1072,7 @@ def archive(request, pk):
     with open(os.path.join(
         archive_loc,
         report_instance.title + '.zip'),
-      'wb') as archive_file:
+        'wb') as archive_file:
         archive_file.write(zip_buffer.read())
         new_archive = Archive(
             client=report_instance.project.client,
@@ -963,7 +1108,7 @@ def clone_report(request, pk):
     """View function to clone the specified report along with all of its
     findings.
     """
-    report_instance = ReportFindingLink.objects.\
+    report_instance = ReportFindingLink.objects. \
         select_related('report').filter(report=pk)
     # Clone the report by editing title, setting PK to `None`, and saving it
     report_to_clone = report_instance[0].report
@@ -998,17 +1143,18 @@ def convert_finding(request, pk):
     else:
         finding_instance = get_object_or_404(ReportFindingLink, pk=pk)
         form = FindingCreateForm(initial={
-                'title': finding_instance.title,
-                'description': finding_instance.description,
-                'impact': finding_instance.impact,
-                'mitigation': finding_instance.mitigation,
-                'replication_steps': finding_instance.replication_steps,
-                'host_detection_techniques': finding_instance.host_detection_techniques,
-                'network_detection_techniques': finding_instance.network_detection_techniques,
-                'references': finding_instance.references,
-                'severity': finding_instance.severity,
-                'finding_type': finding_instance.finding_type
-            }
+            'nessusID': finding_instance.nessusID,
+            'title': finding_instance.title,
+            'description': finding_instance.description,
+            'impact': finding_instance.impact,
+            'mitigation': finding_instance.mitigation,
+            'replication_steps': finding_instance.replication_steps,
+            'host_detection_techniques': finding_instance.host_detection_techniques,
+            'network_detection_techniques': finding_instance.network_detection_techniques,
+            'references': finding_instance.references,
+            'severity': finding_instance.severity,
+            'finding_type': finding_instance.finding_type
+        }
         )
     return render(request, 'reporting/finding_form.html', {'form': form})
 
@@ -1076,7 +1222,7 @@ class FindingUpdate(LoginRequiredMixin, UpdateView):
     def get_success_url(self):
         """Override the function to return to the new record after creation."""
         messages.success(self.request, 'Master record for %s was '
-                         'successfully updated.' % self.get_object().title,
+                                       'successfully updated.' % self.get_object().title,
                          extra_tags='alert-success')
         return reverse('reporting:finding_detail', kwargs={'pk': self.object.pk})
 
@@ -1091,7 +1237,7 @@ class FindingDelete(LoginRequiredMixin, DeleteView):
     def get_success_url(self):
         """Override the function to return a message after deletion."""
         messages.warning(self.request, 'Master record for %s was successfully '
-                         'deleted.' % self.get_object().title,
+                                       'deleted.' % self.get_object().title,
                          extra_tags='alert-warning')
         return reverse_lazy('reporting:findings')
 
@@ -1139,16 +1285,16 @@ class ReportCreate(LoginRequiredMixin, CreateView):
             project.project_type,
             project.start_date)
         return {
-                'title': title,
-                'project': project
-               }
+            'title': title,
+            'project': project
+        }
 
     def get_success_url(self):
         """Override the function to return to the new record after creation."""
         self.request.session['active_report']['id'] = self.object.pk
         self.request.session.modified = True
         messages.success(self.request, 'New report was successfully created '
-                         'and is now your active report.',
+                                       'and is now your active report.',
                          extra_tags='alert-success')
         return reverse('reporting:report_detail', kwargs={'pk': self.object.pk})
 
@@ -1170,7 +1316,6 @@ class ReportCreateWithoutProject(LoginRequiredMixin, CreateView):
 
     def form_valid(self, form):
         """Override form_valid to perform additional actions on new entries."""
-        from ghostwriter.rolodex.models import Project
         form.instance.created_by = self.request.user
         self.request.session['active_report'] = {}
         self.request.session['active_report']['title'] = form.instance.title
@@ -1181,7 +1326,7 @@ class ReportCreateWithoutProject(LoginRequiredMixin, CreateView):
         self.request.session['active_report']['id'] = self.object.pk
         self.request.session.modified = True
         messages.success(self.request, 'New report was successfully created '
-                         'and is now your active report.',
+                                       'and is now your active report.',
                          extra_tags='alert-success')
         return reverse('reporting:report_detail', kwargs={'pk': self.object.pk})
 
@@ -1223,7 +1368,7 @@ class ReportDelete(LoginRequiredMixin, DeleteView):
         self.request.session['active_report']['title'] = ''
         self.request.session.modified = True
         messages.warning(self.request, 'Report and associated evidence files '
-                         'were deleted successfully.',
+                                       'were deleted successfully.',
                          extra_tags='alert-warning')
         return reverse_lazy('reporting:reports')
 
@@ -1302,10 +1447,10 @@ class ReportFindingLinkUpdate(LoginRequiredMixin, UpdateView):
         """Override the function to set a custom queryset for the form."""
         from ghostwriter.rolodex.models import ProjectAssignment
         form = super(ReportFindingLinkUpdate, self).get_form(form_class)
-        user_primary_keys = ProjectAssignment.objects.\
-            filter(project=self.object.report.project).\
+        user_primary_keys = ProjectAssignment.objects. \
+            filter(project=self.object.report.project). \
             values_list('operator', flat=True)
-        form.fields['assigned_to'].queryset = User.objects.\
+        form.fields['assigned_to'].queryset = User.objects. \
             filter(id__in=user_primary_keys)
         return form
 
@@ -1343,7 +1488,7 @@ class ReportFindingLinkDelete(LoginRequiredMixin, DeleteView):
                 if finding.position > self.get_object().position:
                     finding.position -= 1
                     finding.save()
-        return super(ReportFindingLinkDelete, self).\
+        return super(ReportFindingLinkDelete, self). \
             delete(request, *args, **kwargs)
 
 
@@ -1381,7 +1526,7 @@ class EvidenceDelete(LoginRequiredMixin, DeleteView):
     def get_success_url(self):
         """Override the function to return to the report after deletion."""
         messages.warning(self.request, '%s was removed from this report and '
-                         'the associated file has been deleted.' %
+                                       'the associated file has been deleted.' %
                          self.get_object().friendly_name,
                          extra_tags='alert-success')
         return reverse(
@@ -1438,9 +1583,9 @@ class FindingNoteCreate(LoginRequiredMixin, CreateView):
             Finding, pk=self.kwargs.get('pk'))
         finding = finding_instance
         return {
-                'finding': finding,
-                'operator': self.request.user
-               }
+            'finding': finding,
+            'operator': self.request.user
+        }
 
 
 class FindingNoteUpdate(LoginRequiredMixin, UpdateView):
@@ -1508,9 +1653,9 @@ class LocalFindingNoteCreate(LoginRequiredMixin, CreateView):
             ReportFindingLink, pk=self.kwargs.get('pk'))
         finding = finding_instance
         return {
-                'finding': finding,
-                'operator': self.request.user
-               }
+            'finding': finding,
+            'operator': self.request.user
+        }
 
 
 class LocalFindingNoteUpdate(LoginRequiredMixin, UpdateView):
